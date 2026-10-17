@@ -24,13 +24,15 @@ import java.net.URL
 class MainActivity : Activity() {
 
     companion object {
-        val PROVIDERS = listOf("Perplexity", "Claude", "Gemini")
+        val PROVIDERS = listOf("Tavily", "Perplexity", "Claude", "Gemini")
         val DEFAULT_MODELS = mapOf(
+            "Tavily" to "basic",
             "Perplexity" to "sonar",
             "Claude" to "claude-sonnet-4-6",
             "Gemini" to "gemini-2.5-flash"
         )
         val HELP = mapOf(
+            "Tavily" to "GRATIS, sin tarjeta. Key en app.tavily.com (empieza con tvly-). En 'Modelo' dejá basic.",
             "Perplexity" to "Key en perplexity.ai/settings/api (requiere crédito cargado)",
             "Claude" to "Key en console.anthropic.com (requiere crédito cargado)",
             "Gemini" to "Key en aistudio.google.com/apikey"
@@ -50,7 +52,7 @@ class MainActivity : Activity() {
     private lateinit var results: LinearLayout
     private val prefs by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
 
-    private fun provider() = prefs.getString("provider", "Perplexity") ?: "Perplexity"
+    private fun provider() = prefs.getString("provider", "Tavily") ?: "Tavily"
     private fun keyOf(p: String) = prefs.getString("key_$p", "") ?: ""
     private fun modelOf(p: String) =
         prefs.getString("model_$p", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_MODELS[p]!!
@@ -270,8 +272,34 @@ class MainActivity : Activity() {
         return when (p) {
             "Claude" -> askClaude(q, key, model)
             "Gemini" -> askGemini(q, key, model)
-            else -> askPerplexity(q, key, model)
+            "Perplexity" -> askPerplexity(q, key, model)
+            else -> askTavily(q, key, model)
         }
+    }
+
+    // ---------- Tavily (gratis, 1000 búsquedas/mes) ----------
+    private fun askTavily(q: String, key: String, depth: String): Result {
+        val body = JSONObject()
+            .put("query", q)
+            .put("include_answer", true)
+            .put("search_depth", if (depth == "advanced") "advanced" else "basic")
+            .put("max_results", 5)
+        val res = post(
+            "https://api.tavily.com/search",
+            mapOf("Authorization" to "Bearer $key"), body
+        )
+        val answer = if (res.isNull("answer")) "" else res.optString("answer").trim()
+        val sources = ArrayList<Source>()
+        val rs = res.optJSONArray("results")
+        if (rs != null) for (i in 0 until minOf(rs.length(), 5)) {
+            val r = rs.getJSONObject(i)
+            val u = r.optString("url")
+            if (u.isNotEmpty()) sources.add(Source(r.optString("title", u), u))
+        }
+        val text = answer.ifEmpty {
+            sources.firstOrNull()?.let { "Resultado más relevante:\n${it.url}" } ?: "Sin resultados."
+        }
+        return Result(text, sources)
     }
 
     // ---------- Perplexity (Sonar) ----------
