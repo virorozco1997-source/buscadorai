@@ -124,7 +124,8 @@ class MainActivity : Activity() {
             setTextColor(c(R.color.text))
             textSize = 17f
             background = null
-            minHeight = dp(48)
+            setPadding(0, 0, 0, 0)
+            includeFontPadding = false
             gravity = Gravity.CENTER_VERTICAL
             setTextCursorDrawable(GradientDrawable().apply {
                 setColor(c(R.color.text)); setSize(dp(2), dp(22))
@@ -142,7 +143,7 @@ class MainActivity : Activity() {
             background = round(c(R.color.accent), 24)
             setOnClickListener { search() }
         }
-        bar.addView(input, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(16) })
+        bar.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(16) })
         bar.addView(send, LinearLayout.LayoutParams(dp(48), dp(48)))
         val barLp = LinearLayout.LayoutParams(-1, -2).apply {
             setMargins(dp(16), dp(8), dp(16), dp(16))
