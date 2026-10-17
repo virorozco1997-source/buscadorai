@@ -15,6 +15,7 @@ import android.text.util.Linkify
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -38,6 +39,18 @@ class MainActivity : Activity() {
             "Claude" to "Key en console.anthropic.com (requiere crédito cargado)",
             "Gemini" to "Key en aistudio.google.com/apikey"
         )
+        val ES_WORDS = setOf(
+            "el", "la", "los", "las", "de", "del", "que", "qué", "para", "por", "con", "un", "una",
+            "dame", "dime", "cómo", "como", "cuál", "cual", "cuáles", "dónde", "donde", "quién", "quien",
+            "es", "en", "y", "se", "mi", "mis", "su", "al", "lo", "hay", "cuándo", "cuando",
+            "necesito", "quiero", "busca", "buscar", "sobre", "pagina", "página"
+        )
+        val EN_WORDS = setOf(
+            "the", "what", "where", "how", "who", "whom", "why", "when", "which", "is", "are", "was",
+            "were", "of", "and", "to", "in", "for", "give", "find", "show", "tell", "with", "from",
+            "about", "best", "top", "latest", "does", "do", "can", "please", "my", "your", "you",
+            "it", "this", "that", "i"
+        )
         const val SYSTEM = "Sos un buscador. Respondé siempre en español, de forma directa y completa. " +
             "Si piden un link, buscalo en la web y dá la URL oficial completa. " +
             "Si piden información, dála completa en esta misma respuesta. " +
@@ -51,6 +64,7 @@ class MainActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var send: ImageButton
     private lateinit var results: LinearLayout
+    private var lastQuestion = ""
     private val prefs by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
 
     private fun provider() = prefs.getString("provider", "Tavily") ?: "Tavily"
@@ -197,8 +211,26 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
     }
 
+    private fun addQuestion() {
+        if (lastQuestion.isEmpty()) return
+        results.addView(TextView(this).apply {
+            text = lastQuestion
+            textSize = 16f
+            setTextColor(c(R.color.on_accent))
+            background = round(c(R.color.accent), 22)
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+            layoutParams = LinearLayout.LayoutParams(-2, -2).apply {
+                gravity = Gravity.END
+                marginStart = dp(48)
+                topMargin = dp(4)
+                bottomMargin = dp(14)
+            }
+        })
+    }
+
     private fun showMessage(msg: String) {
         results.removeAllViews()
+        addQuestion()
         val card = card()
         card.addView(TextView(this).apply {
             text = msg; textSize = 16f; setTextColor(c(R.color.text))
@@ -208,6 +240,7 @@ class MainActivity : Activity() {
 
     private fun showResult(r: Result) {
         results.removeAllViews()
+        addQuestion()
         val answer = card()
         answer.addView(TextView(this).apply {
             text = r.text
@@ -253,6 +286,10 @@ class MainActivity : Activity() {
         val q = input.text.toString().trim()
         if (q.isEmpty()) return
         if (keyOf(provider()).isBlank()) { settings(); return }
+        lastQuestion = q
+        input.setText("")
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(input.windowToken, 0)
         send.isEnabled = false
         showMessage("Buscando...")
         Thread {
@@ -296,9 +333,12 @@ class MainActivity : Activity() {
             post(url, headers, body)
         }
         val rawAnswer = if (res.isNull("answer")) "" else res.optString("answer").trim()
-        // Si la pregunta no está en inglés, se responde en español; si está en inglés, se deja tal cual.
-        val lang = if (rawAnswer.isEmpty()) null else detectLang(q)
-        val answer = if (lang != null && lang != "en") translate(rawAnswer, "es") else rawAnswer
+        // Pregunta en español -> respuesta en español; en inglés -> se deja tal cual.
+        var answer = rawAnswer
+        if (rawAnswer.isNotEmpty() && wantsSpanish(q)) {
+            val (t, ok) = translateAnswer(rawAnswer)
+            answer = if (ok) t else "$t\n\n(No se pudo traducir la respuesta.)"
+        }
         val sources = ArrayList<Source>()
         val rs = res.optJSONArray("results")
         if (rs != null) for (i in 0 until minOf(rs.length(), 5)) {
@@ -312,30 +352,72 @@ class MainActivity : Activity() {
         return Result(text, sources)
     }
 
-    // Traducción con el servicio gratuito (no oficial) de Google Translate.
-    // Si falla por cualquier motivo, se devuelve el texto original.
-    private fun gt(text: String, tl: String): JSONArray? = try {
-        val conn = URL("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$tl&dt=t")
-            .openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
+    // ---------- Idioma y traducción (servicios gratuitos, sin key) ----------
+    private fun wantsSpanish(q: String): Boolean {
+        val lower = q.lowercase()
+        if (lower.any { it in "áéíóúñ¿¡ü" }) return true
+        val words = lower.split(Regex("[^a-záéíóúñü]+")).filter { it.isNotEmpty() }
+        if (words.any { it in ES_WORDS }) return true
+        if (words.any { it in EN_WORDS }) return false
+        // Ambiguo: se consulta a Google Translate; si no responde, se asume español.
+        val d = gtxRaw(q, "en")?.optString(2)?.takeIf { it.isNotBlank() && it != "null" }
+        return d == null || d != "en"
+    }
+
+    private fun gtxRaw(text: String, tl: String): JSONArray? = try {
+        val u = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$tl&dt=t&q=" +
+            URLEncoder.encode(text, "UTF-8")
+        val conn = URL(u).openConnection() as HttpURLConnection
         conn.connectTimeout = 8000
         conn.readTimeout = 8000
-        conn.doOutput = true
-        conn.setRequestProperty("content-type", "application/x-www-form-urlencoded")
-        conn.outputStream.use { it.write(("q=" + URLEncoder.encode(text, "UTF-8")).toByteArray()) }
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0")
         JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
     } catch (e: Exception) { null }
 
-    private fun translate(text: String, tl: String): String {
-        val arr = gt(text, tl)?.optJSONArray(0) ?: return text
+    private fun gtx(text: String, tl: String): String? {
+        val arr = gtxRaw(text, tl)?.optJSONArray(0) ?: return null
         val sb = StringBuilder()
         for (i in 0 until arr.length()) sb.append(arr.optJSONArray(i)?.optString(0) ?: "")
-        return sb.toString().ifBlank { text }
+        return sb.toString().ifBlank { null }
     }
 
-    // Idioma detectado del texto (código como "en", "es"), o null si no se pudo.
-    private fun detectLang(text: String): String? =
-        gt(text, "en")?.optString(2)?.takeIf { it.isNotBlank() && it != "null" }
+    private fun myMemory(text: String): String? = try {
+        val u = "https://api.mymemory.translated.net/get?langpair=en%7Ces&q=" + URLEncoder.encode(text, "UTF-8")
+        val conn = URL(u).openConnection() as HttpURLConnection
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        val o = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+        if (o.optInt("responseStatus") == 200)
+            o.getJSONObject("responseData").optString("translatedText").ifBlank { null }
+        else null
+    } catch (e: Exception) { null }
+
+    private fun chunks(text: String, max: Int = 400): List<String> {
+        val pieces = text.split(Regex("(?<=[.!?])\\s+")).flatMap {
+            if (it.length > max) it.chunked(max) else listOf(it)
+        }
+        val out = ArrayList<String>()
+        val cur = StringBuilder()
+        for (p in pieces) {
+            if (cur.isNotEmpty() && cur.length + p.length + 1 > max) { out.add(cur.toString()); cur.setLength(0) }
+            if (cur.isNotEmpty()) cur.append(' ')
+            cur.append(p)
+        }
+        if (cur.isNotEmpty()) out.add(cur.toString())
+        return out
+    }
+
+    // Devuelve el texto en español y si la traducción salió bien.
+    private fun translateAnswer(text: String): Pair<String, Boolean> {
+        var ok = true
+        val sb = StringBuilder()
+        for (c in chunks(text)) {
+            val t = gtx(c, "es") ?: myMemory(c)
+            if (t == null) { ok = false; sb.append(c) } else sb.append(t)
+            sb.append(' ')
+        }
+        return sb.toString().trim() to ok
+    }
 
     // ---------- Perplexity (Sonar) ----------
     private fun askPerplexity(q: String, key: String, model: String): Result {
