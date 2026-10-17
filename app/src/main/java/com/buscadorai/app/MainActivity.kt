@@ -85,7 +85,7 @@ class MainActivity : Activity() {
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(24), dp(56), dp(16), dp(20))
         }
         val title = TextView(this).apply {
@@ -114,7 +114,7 @@ class MainActivity : Activity() {
 
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.BOTTOM
             background = round(c(R.color.card), 32)
             setPadding(dp(22), dp(6), dp(8), dp(6))
         }
@@ -124,9 +124,14 @@ class MainActivity : Activity() {
             setTextColor(c(R.color.text))
             textSize = 17f
             background = null
+            minHeight = dp(48)
+            gravity = Gravity.CENTER_VERTICAL
+            setTextCursorDrawable(GradientDrawable().apply {
+                setColor(c(R.color.text)); setSize(dp(2), dp(22))
+            })
+            // Una sola línea: el texto se desplaza hacia el costado al escribir
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             imeOptions = EditorInfo.IME_ACTION_SEARCH
-            maxLines = 3
             setOnEditorActionListener { _, id, _ ->
                 if (id == EditorInfo.IME_ACTION_SEARCH) { search(); true } else false
             }
@@ -137,7 +142,7 @@ class MainActivity : Activity() {
             background = round(c(R.color.accent), 24)
             setOnClickListener { search() }
         }
-        bar.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(input, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(16) })
         bar.addView(send, LinearLayout.LayoutParams(dp(48), dp(48)))
         val barLp = LinearLayout.LayoutParams(-1, -2).apply {
             setMargins(dp(16), dp(8), dp(16), dp(16))
