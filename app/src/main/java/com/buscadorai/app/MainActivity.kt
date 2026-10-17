@@ -284,10 +284,16 @@ class MainActivity : Activity() {
             .put("include_answer", true)
             .put("search_depth", if (depth == "advanced") "advanced" else "basic")
             .put("max_results", 5)
-        val res = post(
-            "https://api.tavily.com/search",
-            mapOf("Authorization" to "Bearer $key"), body
-        )
+            .put("country", "argentina")
+        val headers = mapOf("Authorization" to "Bearer $key")
+        val url = "https://api.tavily.com/search"
+        // Prioriza resultados de Argentina (más en español); si falla, reintenta sin eso.
+        val res = try {
+            post(url, headers, body)
+        } catch (e: Exception) {
+            body.remove("country")
+            post(url, headers, body)
+        }
         val answer = if (res.isNull("answer")) "" else res.optString("answer").trim()
         val sources = ArrayList<Source>()
         val rs = res.optJSONArray("results")
