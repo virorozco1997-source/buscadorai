@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -12,6 +13,7 @@ import android.text.InputType
 import android.text.method.LinkMovementMethod
 import android.text.util.Linkify
 import android.view.Gravity
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.*
 import org.json.JSONArray
@@ -22,7 +24,17 @@ import java.net.URL
 class MainActivity : Activity() {
 
     companion object {
-        const val DEFAULT_MODEL = "gemini-2.5-flash"
+        val PROVIDERS = listOf("Perplexity", "Claude", "Gemini")
+        val DEFAULT_MODELS = mapOf(
+            "Perplexity" to "sonar",
+            "Claude" to "claude-sonnet-4-6",
+            "Gemini" to "gemini-2.5-flash"
+        )
+        val HELP = mapOf(
+            "Perplexity" to "Key en perplexity.ai/settings/api (requiere crédito cargado)",
+            "Claude" to "Key en console.anthropic.com (requiere crédito cargado)",
+            "Gemini" to "Key en aistudio.google.com/apikey"
+        )
         const val SYSTEM = "Sos un buscador. Respondé siempre en español, de forma directa y completa. " +
             "Si piden un link, buscalo en la web y dá la URL oficial completa. " +
             "Si piden información, dála completa en esta misma respuesta. " +
@@ -38,6 +50,11 @@ class MainActivity : Activity() {
     private lateinit var results: LinearLayout
     private val prefs by lazy { getSharedPreferences("cfg", Context.MODE_PRIVATE) }
 
+    private fun provider() = prefs.getString("provider", "Perplexity") ?: "Perplexity"
+    private fun keyOf(p: String) = prefs.getString("key_$p", "") ?: ""
+    private fun modelOf(p: String) =
+        prefs.getString("model_$p", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_MODELS[p]!!
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun c(id: Int) = getColor(id)
     private fun round(color: Int, r: Int) = GradientDrawable().apply {
@@ -49,7 +66,6 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // Encabezado grande estilo One UI
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
@@ -70,7 +86,6 @@ class MainActivity : Activity() {
         header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(cfg, LinearLayout.LayoutParams(dp(48), dp(48)))
 
-        // Resultados
         results = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), 0, dp(16), dp(16))
@@ -80,7 +95,6 @@ class MainActivity : Activity() {
             addView(results)
         }
 
-        // Barra de búsqueda tipo píldora
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -117,32 +131,56 @@ class MainActivity : Activity() {
         root.addView(bar, barLp)
         setContentView(root)
 
-        if (prefs.getString("key", "").isNullOrBlank()) settings()
+        if (keyOf(provider()).isBlank()) settings()
     }
 
     private fun settings() {
+        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        val dlgTheme = if (night) android.R.style.Theme_DeviceDefault_Dialog_Alert
+        else android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
+
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(8), dp(24), 0)
         }
+        val spin = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity, android.R.layout.simple_spinner_dropdown_item, PROVIDERS
+            )
+            setSelection(PROVIDERS.indexOf(provider()))
+        }
+        val help = TextView(this).apply {
+            textSize = 13f
+            setTextColor(c(R.color.text2))
+            setPadding(0, dp(8), 0, 0)
+        }
         val key = EditText(this).apply {
-            hint = "API key de Google AI Studio"
-            setText(prefs.getString("key", ""))
+            hint = "API key"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
-        val model = EditText(this).apply {
-            hint = "Modelo"
-            setText(prefs.getString("model", DEFAULT_MODEL))
+        val model = EditText(this).apply { hint = "Modelo" }
+
+        spin.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                val n = PROVIDERS[pos]
+                key.setText(keyOf(n))
+                model.setText(modelOf(n))
+                help.text = HELP[n]
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
         }
-        box.addView(key); box.addView(model)
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        box.addView(spin); box.addView(help); box.addView(key); box.addView(model)
+
+        AlertDialog.Builder(this, dlgTheme)
             .setTitle("Configuración")
-            .setMessage("Conseguí una key gratis en aistudio.google.com/apikey")
             .setView(box)
             .setPositiveButton("Guardar") { _, _ ->
+                val n = PROVIDERS[spin.selectedItemPosition]
                 prefs.edit()
-                    .putString("key", key.text.toString().trim())
-                    .putString("model", model.text.toString().trim().ifEmpty { DEFAULT_MODEL })
+                    .putString("provider", n)
+                    .putString("key_$n", key.text.toString().trim())
+                    .putString("model_$n", model.text.toString().trim())
                     .apply()
             }
             .setNegativeButton("Cancelar", null)
@@ -211,7 +249,7 @@ class MainActivity : Activity() {
     private fun search() {
         val q = input.text.toString().trim()
         if (q.isEmpty()) return
-        if (prefs.getString("key", "").isNullOrBlank()) { settings(); return }
+        if (keyOf(provider()).isBlank()) { settings(); return }
         send.isEnabled = false
         showMessage("Buscando...")
         Thread {
@@ -226,8 +264,103 @@ class MainActivity : Activity() {
     }
 
     private fun ask(q: String): Result {
-        val key = prefs.getString("key", "") ?: ""
-        val model = prefs.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
+        val p = provider()
+        val key = keyOf(p)
+        val model = modelOf(p)
+        return when (p) {
+            "Claude" -> askClaude(q, key, model)
+            "Gemini" -> askGemini(q, key, model)
+            else -> askPerplexity(q, key, model)
+        }
+    }
+
+    // ---------- Perplexity (Sonar) ----------
+    private fun askPerplexity(q: String, key: String, model: String): Result {
+        val msgs = JSONArray()
+            .put(JSONObject().put("role", "system").put("content", SYSTEM))
+            .put(JSONObject().put("role", "user").put("content", q))
+        val body = JSONObject().put("model", model).put("messages", msgs)
+        val res = post(
+            "https://api.perplexity.ai/chat/completions",
+            mapOf("Authorization" to "Bearer $key"), body
+        )
+        val raw = res.optJSONArray("choices")?.optJSONObject(0)
+            ?.optJSONObject("message")?.optString("content").orEmpty()
+        val text = raw.replace(Regex("\\[\\d+\\]"), "").trim()
+
+        val sources = ArrayList<Source>()
+        val sr = res.optJSONArray("search_results")
+        if (sr != null) for (i in 0 until minOf(sr.length(), 5)) {
+            val r = sr.getJSONObject(i)
+            val u = r.optString("url")
+            if (u.isNotEmpty()) sources.add(Source(r.optString("title", u), u))
+        }
+        if (sources.isEmpty()) {
+            val ci = res.optJSONArray("citations")
+            if (ci != null) for (i in 0 until minOf(ci.length(), 5)) {
+                val u = ci.optString(i)
+                if (u.isNotEmpty()) sources.add(Source(Uri.parse(u).host ?: u, u))
+            }
+        }
+        return Result(text.ifEmpty { "Sin resultados." }, sources)
+    }
+
+    // ---------- Claude (Anthropic) ----------
+    private fun askClaude(q: String, key: String, model: String): Result {
+        val messages = JSONArray().put(JSONObject().put("role", "user").put("content", q))
+        val tools = JSONArray().put(
+            JSONObject().put("type", "web_search_20250305").put("name", "web_search").put("max_uses", 5)
+        )
+        val text = StringBuilder()
+        val cited = LinkedHashMap<String, String>()
+        val found = LinkedHashMap<String, String>()
+
+        for (turn in 0 until 4) {
+            val body = JSONObject()
+                .put("model", model)
+                .put("max_tokens", 1500)
+                .put("system", SYSTEM)
+                .put("messages", messages)
+                .put("tools", tools)
+            val res = post(
+                "https://api.anthropic.com/v1/messages",
+                mapOf("x-api-key" to key, "anthropic-version" to "2023-06-01"), body
+            )
+            val content = res.getJSONArray("content")
+            for (i in 0 until content.length()) {
+                val b = content.getJSONObject(i)
+                when (b.getString("type")) {
+                    "text" -> {
+                        text.append(b.getString("text"))
+                        val cs = b.optJSONArray("citations")
+                        if (cs != null) for (j in 0 until cs.length()) {
+                            val c = cs.getJSONObject(j)
+                            val u = c.optString("url")
+                            if (u.isNotEmpty()) cited[u] = c.optString("title", u)
+                        }
+                    }
+                    "web_search_tool_result" -> {
+                        val c = b.opt("content")
+                        if (c is JSONArray) for (j in 0 until c.length()) {
+                            val r = c.getJSONObject(j)
+                            val u = r.optString("url")
+                            if (u.isNotEmpty()) found[u] = r.optString("title", u)
+                        }
+                    }
+                }
+            }
+            if (res.optString("stop_reason") != "pause_turn") break
+            messages.put(JSONObject().put("role", "assistant").put("content", content))
+        }
+        val srcs = if (cited.isNotEmpty()) cited else found
+        return Result(
+            text.toString().trim().ifEmpty { "Sin resultados." },
+            srcs.entries.take(5).map { Source(it.value, it.key) }
+        )
+    }
+
+    // ---------- Gemini (Google) ----------
+    private fun askGemini(q: String, key: String, model: String): Result {
         val body = JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM))))
             .put("contents", JSONArray().put(
@@ -235,11 +368,12 @@ class MainActivity : Activity() {
                     .put("parts", JSONArray().put(JSONObject().put("text", q)))
             ))
             .put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
-
-        val res = post(key, model, body)
+        val res = post(
+            "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent",
+            mapOf("x-goog-api-key" to key), body
+        )
         val cand = res.optJSONArray("candidates")?.optJSONObject(0)
             ?: return Result("Sin resultados.", emptyList())
-
         val text = StringBuilder()
         val parts = cand.optJSONObject("content")?.optJSONArray("parts")
         if (parts != null) for (i in 0 until parts.length()) text.append(parts.getJSONObject(i).optString("text"))
@@ -255,7 +389,6 @@ class MainActivity : Activity() {
         return Result(text.toString().trim().ifEmpty { "Sin resultados." }, sources)
     }
 
-    // Los links de grounding son redirecciones; se resuelve el destino real.
     private fun resolve(u: String): String = try {
         val c = URL(u).openConnection() as HttpURLConnection
         c.instanceFollowRedirects = false
@@ -265,20 +398,23 @@ class MainActivity : Activity() {
         loc ?: u
     } catch (e: Exception) { u }
 
-    private fun post(key: String, model: String, body: JSONObject): JSONObject {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+    // ---------- HTTP común ----------
+    private fun post(url: String, headers: Map<String, String>, body: JSONObject): JSONObject {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
         conn.connectTimeout = 30000
         conn.readTimeout = 120000
         conn.doOutput = true
         conn.setRequestProperty("content-type", "application/json")
-        conn.setRequestProperty("x-goog-api-key", key)
+        headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
         conn.outputStream.use { it.write(body.toString().toByteArray()) }
         val ok = conn.responseCode in 200..299
         val s = (if (ok) conn.inputStream else conn.errorStream).bufferedReader().use { it.readText() }
         if (!ok) {
-            val msg = try { JSONObject(s).getJSONObject("error").getString("message") } catch (e: Exception) { s }
+            val msg = try {
+                val e = JSONObject(s).opt("error")
+                if (e is JSONObject) e.optString("message", s) else s
+            } catch (ex: Exception) { s }
             throw Exception("HTTP ${conn.responseCode}: $msg")
         }
         return JSONObject(s)
