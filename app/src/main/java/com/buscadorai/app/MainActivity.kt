@@ -20,6 +20,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 class MainActivity : Activity() {
 
@@ -294,7 +295,10 @@ class MainActivity : Activity() {
             body.remove("country")
             post(url, headers, body)
         }
-        val answer = if (res.isNull("answer")) "" else res.optString("answer").trim()
+        val rawAnswer = if (res.isNull("answer")) "" else res.optString("answer").trim()
+        // Si la pregunta no está en inglés, se responde en español; si está en inglés, se deja tal cual.
+        val lang = if (rawAnswer.isEmpty()) null else detectLang(q)
+        val answer = if (lang != null && lang != "en") translate(rawAnswer, "es") else rawAnswer
         val sources = ArrayList<Source>()
         val rs = res.optJSONArray("results")
         if (rs != null) for (i in 0 until minOf(rs.length(), 5)) {
@@ -307,6 +311,31 @@ class MainActivity : Activity() {
         }
         return Result(text, sources)
     }
+
+    // Traducción con el servicio gratuito (no oficial) de Google Translate.
+    // Si falla por cualquier motivo, se devuelve el texto original.
+    private fun gt(text: String, tl: String): JSONArray? = try {
+        val conn = URL("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$tl&dt=t")
+            .openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        conn.doOutput = true
+        conn.setRequestProperty("content-type", "application/x-www-form-urlencoded")
+        conn.outputStream.use { it.write(("q=" + URLEncoder.encode(text, "UTF-8")).toByteArray()) }
+        JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
+    } catch (e: Exception) { null }
+
+    private fun translate(text: String, tl: String): String {
+        val arr = gt(text, tl)?.optJSONArray(0) ?: return text
+        val sb = StringBuilder()
+        for (i in 0 until arr.length()) sb.append(arr.optJSONArray(i)?.optString(0) ?: "")
+        return sb.toString().ifBlank { text }
+    }
+
+    // Idioma detectado del texto (código como "en", "es"), o null si no se pudo.
+    private fun detectLang(text: String): String? =
+        gt(text, "en")?.optString(2)?.takeIf { it.isNotBlank() && it != "null" }
 
     // ---------- Perplexity (Sonar) ----------
     private fun askPerplexity(q: String, key: String, model: String): Result {
