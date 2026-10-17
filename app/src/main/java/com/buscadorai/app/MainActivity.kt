@@ -83,15 +83,13 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(24), dp(56), dp(16), dp(20))
+        val header = FrameLayout(this).apply {
+            setPadding(dp(16), dp(48), dp(16), dp(16))
         }
         val title = TextView(this).apply {
             text = "Buscador AI"
-            textSize = 34f
-            setTypeface(typeface, Typeface.BOLD)
+            textSize = 24f
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
             setTextColor(c(R.color.text))
         }
         val cfg = ImageButton(this).apply {
@@ -100,8 +98,8 @@ class MainActivity : Activity() {
             background = round(c(R.color.card), 24)
             setOnClickListener { settings() }
         }
-        header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(cfg, LinearLayout.LayoutParams(dp(48), dp(48)))
+        header.addView(title, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        header.addView(cfg, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END or Gravity.CENTER_VERTICAL))
 
         results = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
